@@ -1,0 +1,234 @@
+## Part 1: Preparation and Kernel Density Estimation (KDE)
+setwd("/Users/landonmyhill/Desktop/STAT 404/HW6")
+load("data.RData")
+ls()
+library(KernSmooth)
+
+# Define function for 2D Kernel Density Estimation (KDE)
+mybkde2D <- function(data){
+  return(bkde2D(data, bandwidth=0.5, range.x = list(c(-20,20),c(-20,20)), gridsize=c(201,201)))
+}
+
+# Apply KDE to both true.signal and distorted.signal
+my.2d.kde <- mybkde2D(true.signal)
+my.second.2d.kde <- mybkde2D(distorted.signal)
+
+# Calculate maximum difference between the two KDEs
+max.z.diff <- max(abs(my.2d.kde$fhat - my.second.2d.kde$fhat))
+
+# Define function for plotting the difference between two KDEs
+diff.plot <- function(kde1, kde2){
+  image(kde1$x1, kde1$x2, kde1$fhat - kde2$fhat, zlim=max.z.diff*c(-1,1), col=colorRampPalette(c("red","white","blue"))(21))
+}
+
+# Plot the difference between true.signal and distorted.signal KDEs
+diff.plot(my.2d.kde, my.second.2d.kde)
+
+## Part 2: Sum of Squared Differences and Shifted KDEs
+# Recalculate KDEs for true.signal and distorted.signal
+true.density <- mybkde2D(true.signal)
+distorted.density <- mybkde2D(distorted.signal)
+
+# Calculate the sum of squared differences between the true and distorted densities
+loss <- sum((true.density$fhat - distorted.density$fhat)^2)
+loss
+
+# Apply a shift of 1 to the x-coordinate of the distorted.signal
+distorted.signal_shift <- distorted.signal
+distorted.signal_shift[, 1] <- distorted.signal_shift[, 1] + 1
+
+# Recalculate KDE after shifting the distorted.signal
+distorted.density_shift <- mybkde2D(distorted.signal_shift)
+
+# Calculate the sum of squared differences between the shifted distorted density and the true density
+loss_shift <- sum((true.density$fhat - distorted.density_shift$fhat)^2)
+loss_shift
+
+
+## Part 3: Loss Function Calculation with Shifted X-coordinate
+# Define a function to calculate the sum of squared differences (loss) for a given shift on the x-coordinate
+calc_loss <- function(shift, true_signal, distorted_signal) {
+  # Shift x-coordinate of distorted set
+  distorted_signal_shift <- distorted_signal
+  distorted_signal_shift[, 1] <- distorted_signal_shift[, 1] + shift
+  
+  # Recalculate KDE for shifted distorted signal
+  distorted_density_shift <- mybkde2D(distorted_signal_shift)
+  true_density <- mybkde2D(true_signal)
+  
+  # Calculate the sum of squared differences between the densities
+  loss <- sum((true_density$fhat - distorted_density_shift$fhat)^2)
+  return(loss)
+}
+
+# Test the loss function for different shifts
+shifts <- c(-4, -3, -2, -1, 0)
+losses <- sapply(shifts, function(shift) calc_loss(shift, true.signal, distorted.signal))
+
+# Print the loss values for each shift
+for (i in 1:length(shifts)) {
+  cat("Shift:", shifts[i], "Loss:", losses[i], "\n")
+}
+
+# Identify the shift that gives the minimum loss
+best_shift <- shifts[which.min(losses)]
+cat("Best Shift:", best_shift, "\n")
+
+## Part 4: Loss Function Calculation with 2D Shifts (X and Y coordinates)
+# Define a function to calculate the sum of squared differences (loss) for a 2D shift (both x and y coordinates)
+calc_loss_2d <- function(shifts, true_signal, distorted_signal) {
+  # Shift both x and y coordinates of distorted set
+  distorted_signal_shift <- distorted_signal
+  distorted_signal_shift[, 1] <- distorted_signal_shift[, 1] + shifts[1]
+  distorted_signal_shift[, 2] <- distorted_signal_shift[, 2] + shifts[2]
+  
+  # Recalculate KDE for shifted distorted signal
+  distorted_density_shift <- mybkde2D(distorted_signal_shift)
+  true_density <- mybkde2D(true_signal)
+  
+  # Calculate the sum of squared differences between the densities
+  loss <- sum((true_density$fhat - distorted_density_shift$fhat)^2)
+  return(loss)
+}
+
+# Test the 2D loss function with zero shift (no change)
+zero_shifts <- c(0, 0)
+loss_zero <- calc_loss_2d(zero_shifts, true.signal, distorted.signal)
+loss_zero
+
+## Part 5: Finding the Optimal 2D Shift Using Optimization
+# Define the loss function for 2D shift
+loss_2d <- function(shifts) {
+  calc_loss_2d(shifts, true.signal, distorted.signal)
+}
+
+# Use optim to find the ideal two-dimensional shift value (starting from (0,0))
+result <- optim(c(0, 0), loss_2d)
+
+# Extract optimal shift and minimum loss from the result
+optimal_shift <- result$par
+minimum_loss <- result$value
+
+# Print the optimal shift and the corresponding minimum loss
+cat("Optimal Shift:", optimal_shift, "\n")
+cat("Minimum Loss:", minimum_loss, "\n")
+
+# Calculate the decrease in loss function after optimization
+initial_loss <- loss_2d(c(0, 0))
+loss_decrease <- initial_loss - minimum_loss
+cat("Loss Decrease:", loss_decrease, "\n")
+
+# Plot the difference between the true signal and the transformed distorted signal
+distorted_signal_shift <- distorted.signal
+distorted_signal_shift[, 1] <- distorted_signal_shift[, 1] + optimal_shift[1]
+distorted_signal_shift[, 2] <- distorted_signal_shift[, 2] + optimal_shift[2]
+
+# Recalculate KDE for shifted distorted signal
+distorted_density_shift <- mybkde2D(distorted_signal_shift)
+true_density <- mybkde2D(true.signal)
+
+# Use the diff.plot function to visualize the difference between true and transformed signals
+diff.plot(true_density, distorted_density_shift)
+
+## Part 6: Applying Affine Transformations (Translation and Rotation)
+# Define the function to transform the data using both shift and matrix multiplication (affine transformation)
+transform_data <- function(input_vector, data_matrix) {
+  # Extract shift values and matrix A elements from input vector
+  shifts <- input_vector[1:2]
+  A_elements <- input_vector[3:6]
+  
+  # Create the transformation matrix A
+  A <- matrix(A_elements, nrow = 2, byrow = TRUE)
+  
+  # Apply the shift to the data matrix
+  transformed_data <- data_matrix + matrix(shifts, nrow = nrow(data_matrix), ncol = 2, byrow = TRUE)
+  
+  # Apply matrix multiplication to transform the coordinates
+  transformed_data <- transformed_data %*% A
+  return(transformed_data)
+}
+
+# Apply transformation for translation (shift by -10 in both directions)
+input_a <- c(-10, -10, 1, 0, 0, 1)
+transformed_data_a <- transform_data(input_a, distorted.signal)
+density_a <- mybkde2D(transformed_data_a)
+contour(density_a$x1, density_a$x2, density_a$fhat, main = "Transformed Density - Translation")
+
+# Apply transformation for rotation (rotate by 180 degrees)
+input_b <- c(0, 0, -1, 0, 0, -1)
+transformed_data_b <- transform_data(input_b, distorted.signal)
+density_b <- mybkde2D(transformed_data_b)
+contour(density_b$x1, density_b$x2, density_b$fhat, main = "Transformed Density - Rotation")
+
+## Part 7: Finding the Optimal Affine Transformation Using Optimization
+# Define the function to calculate the sum of squared differences for affine transformation
+calc_loss_affine <- function(params, true_signal, distorted_signal) {
+  # Extract shifts (first two parameters) and matrix elements (remaining four)
+  shifts <- params[1:2]
+  A_elements <- params[3:6]
+  
+  # Create the transformation matrix A
+  A <- matrix(A_elements, nrow = 2, byrow = TRUE)
+  
+  # Apply the shift to the distorted signal
+  transformed_data <- distorted.signal + matrix(shifts, nrow = nrow(distorted.signal), ncol = 2, byrow = TRUE)
+  
+  # Apply the transformation matrix A to the data
+  transformed_data <- transformed_data %*% A
+  
+  # Estimate the density for the transformed data and the true signal
+  transformed_density <- mybkde2D(transformed_data)
+  true_density <- mybkde2D(true_signal)
+  
+  # Calculate the sum of squared differences between the densities
+  loss <- sum((true_density$fhat - transformed_density$fhat)^2)
+  return(loss)
+}
+
+# Use optim to find the optimal affine transformation (starting with no shift and identity matrix)
+result <- optim(c(0, 0, 1, 0, 0, 1), calc_loss_affine, true_signal = true.signal, distorted_signal = distorted.signal)
+
+# Extract the optimal parameters (shift values and matrix elements) and minimum loss
+optimal_params <- result$par
+minimum_loss <- result$value
+
+# Print the optimal parameters and the corresponding minimum loss
+cat("Optimal Parameters (Shifts and Matrix Elements):", optimal_params, "\n")
+cat("Minimum Loss:", minimum_loss, "\n")
+
+# Apply the optimal affine transformation to the distorted signal
+distorted_signal_shifted <- distorted.signal + matrix(optimal_params[1:2], nrow = nrow(distorted.signal), ncol = 2, byrow = TRUE)
+distorted_signal_transformed <- distorted_signal_shifted %*% matrix(optimal_params[3:6], nrow = 2, byrow = TRUE)
+
+# Estimate the density for the transformed distorted signal and true signal
+distorted_density_transformed <- mybkde2D(distorted_signal_transformed)
+true_density <- mybkde2D(true.signal)
+
+# Use diff.plot to visualize the difference between true and transformed densities
+diff.plot(true_density, distorted_density_transformed)
+
+## Part 8: Refining the Transformation with an Improved Starting Point
+# Define the new starting point by combining the previously found best shift and the identity matrix for the transformation
+start_point <- c(best_shift, 0, 0, 1, 0, 0, 1)
+
+# Use optim to find the ideal affine transformation, starting from the new starting point
+result <- optim(start_point, calc_loss_affine, true_signal = true.signal, distorted_signal = distorted.signal)
+
+# Extract the optimal parameters (shift values and matrix elements) and minimum loss
+optimal_params <- result$par
+minimum_loss <- result$value
+
+# Print the optimal parameters and the corresponding minimum loss
+cat("Optimal Parameters (Shifts and Matrix Elements):", optimal_params, "\n")
+cat("Minimum Loss:", minimum_loss, "\n")
+
+# Apply the optimal affine transformation to the distorted signal
+distorted_signal_shifted <- distorted.signal + matrix(optimal_params[1:2], nrow = nrow(distorted.signal), ncol = 2, byrow = TRUE)
+distorted_signal_transformed <- distorted_signal_shifted %*% matrix(optimal_params[3:6], nrow = 2, byrow = TRUE)
+
+# Estimate the density for the transformed distorted signal and true signal
+distorted_density_transformed <- mybkde2D(distorted_signal_transformed)
+true_density <- mybkde2D(true.signal)
+
+# Use diff.plot to visualize the difference between true and transformed densities
+diff.plot(true_density, distorted_density_transformed)
